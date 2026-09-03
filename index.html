@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>나만의 단어장</title>
+  
+  <!-- PWA 및 모바일 앱 설정 -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0284c7">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="단어장">
+  <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/3389/3389081.png">
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- 1. PC 전용 좌측 사이드바 (모바일에서는 자동 숨김) -->
+  <aside class="sidebar pc-only">
+    <h2>단어 세트 목록</h2>
+    <div class="add-set-box">
+      <input type="text" id="setNameInput" placeholder="예: Day 1, 전기기기">
+      <label class="upload-btn-label" for="csvFileInput">+ CSV 파일 선택</label>
+      <input type="file" id="csvFileInput" accept=".csv, .txt">
+    </div>
+    <ul class="set-list" id="setList"></ul>
+  </aside>
+
+  <!-- 2. 메인 컨테이너 -->
+  <div class="main-wrapper">
+    <!-- 상단 탭 네비게이션 -->
+    <header class="top-nav">
+      <!-- 모바일 전용 세트 선택 셀렉트박스 -->
+      <div class="mobile-set-selector mobile-only">
+        <select id="mobileSetSelect" onchange="selectSet(this.value)">
+          <option value="">세트 선택...</option>
+        </select>
+      </div>
+
+      <div class="nav-buttons">
+        <button class="tab-btn active" id="tabCard" onclick="switchMode('card')">단어장</button>
+        <button class="tab-btn" id="tabLearn" onclick="switchMode('learn')">학습</button>
+        <button class="tab-btn pc-only" id="tabExam" onclick="switchMode('exam')">시험</button>
+        <button class="tab-btn" id="tabRecord" onclick="switchMode('record')">기록</button>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <div class="current-set-title pc-only" id="currentSetTitle">데이터를 불러오는 중입니다...</div>
+
+      <!-- 1) 단어장 모드 -->
+      <div id="cardModeView" class="mode-view">
+        <div class="card" id="card" onclick="flipCard()">카드를 불러오는 중...</div>
+        <div class="status" id="cardStatus">0 / 0</div>
+        <div class="btn-group">
+          <button id="prevBtn" onclick="prevCard()" disabled>이전</button>
+          <button id="nextBtn" onclick="nextCard()" disabled>다음</button>
+        </div>
+      </div>
+
+      <!-- 2) 학습(4지선다) 모드 -->
+      <div id="learnModeView" class="mode-view quiz-container" style="display: none;">
+        <div class="quiz-question-card" id="quizQuestion">문제</div>
+        <div class="options-grid" id="optionsGrid"></div>
+        <div class="status" id="quizStatus">1 / 10</div>
+      </div>
+
+      <!-- 학습 결과 화면 -->
+      <div id="resultModeView" class="mode-view result-container" style="display: none;">
+        <h2>학습 완료!</h2>
+        <div class="result-score" id="resultScore">점수: 0 / 0</div>
+        <div class="wrong-list" id="wrongList"></div>
+        <button class="action-btn" onclick="startLearnMode()">다시 학습하기</button>
+      </div>
+
+      <!-- 3) 시험 모드 (PC 전용) -->
+      <div id="examModeView" class="mode-view exam-container" style="display: none;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="width: 50px;">번호</th>
+              <th style="width: 200px;">영단어/문제</th>
+              <th>내 답안</th>
+              <th id="correctHeader" style="width: 220px; display: none;">정답</th>
+              <th id="gradeHeader" style="width: 90px; text-align: center; display: none;">채점</th>
+            </tr>
+          </thead>
+          <tbody id="examTbody"></tbody>
+        </table>
+
+        <div class="exam-bottom-panel">
+          <div class="exam-stats" id="examStats">
+            채점 상태: <span id="scoreText">답안 작성 중</span>
+          </div>
+          <div>
+            <button id="submitExamBtn" class="action-btn" onclick="submitExam()">채점하기</button>
+            <button id="saveExamBtn" class="action-btn" style="display: none; background-color: #10b981;" onclick="saveExamRecord()">기록 저장</button>
+            <button id="resetExamBtn" class="action-btn" style="display: none; background-color: #64748b;" onclick="startExamMode()">다시 풀기</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4) 기록 모드 -->
+      <div id="recordModeView" class="mode-view record-container" style="display: none;">
+        <div class="record-header">
+          <h3>학습 이력</h3>
+          <button class="action-btn delete-all-btn" onclick="clearRecords()">전체 삭제</button>
+        </div>
+        <table class="data-table" id="recordTable">
+          <thead>
+            <tr>
+              <th>날짜</th>
+              <th>세트</th>
+              <th>구분</th>
+              <th>점수</th>
+              <th>정답률</th>
+              <th style="text-align: center;">틀린 것</th>
+            </tr>
+          </thead>
+          <tbody id="recordTbody"></tbody>
+        </table>
+        <div id="noRecordMsg" class="no-data-msg" style="display: none;">
+          학습 기록이 없습니다.
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- 오답 팝업창 -->
+  <div id="wrongModal" class="modal-overlay" style="display: none;" onclick="closeModal()">
+    <div class="modal-content" onclick="event.stopPropagation()">
+      <h3>틀린 단어 목록</h3>
+      <div class="wrong-list" id="modalWrongList"></div>
+      <button class="action-btn" style="margin-top: 16px; width: 100%;" onclick="closeModal()">닫기</button>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="app.js"></script>
+</body>
+</html>
