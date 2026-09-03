@@ -566,7 +566,7 @@ async function clearRecords() {
 }
 
 // ------------------------------------------
-// 세트 등록 및 렌더링
+// 세트 등록 (EUC-KR / UTF-8 한글 인코딩 자동 감지)
 // ------------------------------------------
 if (csvFileInput) {
   csvFileInput.addEventListener("change", function(e) {
@@ -576,8 +576,19 @@ if (csvFileInput) {
     let name = setNameInput.value.trim() || file.name.replace(/\.[^/.]+$/, "");
     const reader = new FileReader();
 
+    // 파일을 바이너리(ArrayBuffer)로 먼저 읽어서 인코딩 판별
     reader.onload = async function(evt) {
-      const parsed = parseData(evt.target.result);
+      const buffer = evt.target.result;
+      
+      // 1. UTF-8 디코딩 시도
+      let text = new TextDecoder("utf-8", { fatal: false }).decode(buffer);
+
+      // 2. 만약 깨진 글자( 특수기호)가 감지되면 한국어 규격인 EUC-KR(CP949)로 재디코딩
+      if (text.includes("\uFFFD")) {
+        text = new TextDecoder("euc-kr").decode(buffer);
+      }
+
+      const parsed = parseData(text);
       if (parsed.length === 0) {
         alert("단어를 읽을 수 없습니다. CSV 형식을 확인해 주세요.");
         return;
@@ -605,7 +616,8 @@ if (csvFileInput) {
       renderMobileSelect();
       selectSet(name);
     };
-    reader.readAsText(file, "UTF-8");
+
+    reader.readAsArrayBuffer(file); // Buffer 형태로 읽기
   });
 }
 
