@@ -1,15 +1,13 @@
 // ==========================================
 // 1. Supabase 연동 설정
 // ==========================================
-// [중요] 아래 큰따옴표 안에 본인의 실제 주소와 키를 넣어주세요.
 const SUPABASE_URL = "https://dgqhoawgmbfaqbzgjexu.supabase.co";
 const SUPABASE_KEY = "sb_publishable_41UG8gEXQxji7VsL7NBXkQ_vstt0RcE";
 
 let supabaseClient = null;
 
-// URL 및 키 유효성 검사 (스크립트 멈춤 방지)
 try {
-  if (SUPABASE_URL.startsWith("http") && !SUPABASE_URL.includes("여기에_")) {
+  if (typeof supabase !== "undefined") {
     supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
   }
 } catch (e) {
@@ -81,7 +79,7 @@ const noRecordMsg = document.getElementById("noRecordMsg");
 const wrongModal = document.getElementById("wrongModal");
 const modalWrongList = document.getElementById("modalWrongList");
 
-// 애플리케이션 시작
+// 앱 구동 시작
 window.addEventListener("DOMContentLoaded", initApp);
 
 async function initApp() {
@@ -89,7 +87,6 @@ async function initApp() {
     await loadSetsFromCloud();
     await loadRecordsFromCloud();
   } else {
-    console.warn("Supabase 키가 설정되지 않아 로컬 모드로 작동합니다.");
     renderSetList();
     renderMobileSelect();
   }
@@ -105,7 +102,7 @@ async function initApp() {
 }
 
 // ------------------------------------------
-// Supabase 통신
+// Supabase 클라우드 데이터 통신
 // ------------------------------------------
 async function loadSetsFromCloud() {
   if (!supabaseClient) return;
@@ -195,7 +192,7 @@ function selectSet(name) {
   words = studySets[name] || [];
   currentIndex = 0;
   currentSetTitle.innerText = `현재 세트: ${name} (${words.length}단어)`;
-  
+
   renderSetList();
   if (mobileSetSelect) mobileSetSelect.value = name;
 
@@ -342,7 +339,7 @@ async function finishQuiz() {
 }
 
 // ------------------------------------------
-// 3) 시험 모드
+// 3) 시험 모드 (PC 전용)
 // ------------------------------------------
 function startExamMode() {
   if (!words || words.length === 0) {
@@ -566,7 +563,7 @@ async function clearRecords() {
 }
 
 // ------------------------------------------
-// 세트 등록 (EUC-KR / UTF-8 한글 인코딩 자동 감지)
+// 세트 등록 (UTF-8 / CP949 자동 판별)
 // ------------------------------------------
 if (csvFileInput) {
   csvFileInput.addEventListener("change", function(e) {
@@ -576,16 +573,16 @@ if (csvFileInput) {
     let name = setNameInput.value.trim() || file.name.replace(/\.[^/.]+$/, "");
     const reader = new FileReader();
 
-    // 파일을 바이너리(ArrayBuffer)로 먼저 읽어서 인코딩 판별
     reader.onload = async function(evt) {
       const buffer = evt.target.result;
-      
-      // 1. UTF-8 디코딩 시도
-      let text = new TextDecoder("utf-8", { fatal: false }).decode(buffer);
+      let text = "";
 
-      // 2. 만약 깨진 글자( 특수기호)가 감지되면 한국어 규격인 EUC-KR(CP949)로 재디코딩
-      if (text.includes("\uFFFD")) {
-        text = new TextDecoder("euc-kr").decode(buffer);
+      try {
+        const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
+        text = utf8Decoder.decode(buffer);
+      } catch (err) {
+        const eucDecoder = new TextDecoder("euc-kr");
+        text = eucDecoder.decode(buffer);
       }
 
       const parsed = parseData(text);
@@ -617,7 +614,7 @@ if (csvFileInput) {
       selectSet(name);
     };
 
-    reader.readAsArrayBuffer(file); // Buffer 형태로 읽기
+    reader.readAsArrayBuffer(file);
   });
 }
 
