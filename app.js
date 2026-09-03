@@ -1,563 +1,639 @@
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-  -webkit-tap-highlight-color: transparent;
+// ==========================================
+// 1. Supabase 연동 설정 (본인 정보 입력)
+// ==========================================
+const SUPABASE_URL = "여기에_Project_URL_붙여넣기";
+const SUPABASE_KEY = "여기에_publishable_또는_anon_key_붙여넣기";
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// ==========================================
+// 2. 상태 관리 변수
+// ==========================================
+let studySets = {};
+let historyRecords = [];
+let currentSetName = "";
+let words = [];
+let currentMode = "card";
+
+let currentIndex = 0;
+let isFlipped = false;
+
+let quizQueue = [];
+let quizIndex = 0;
+let quizWrongs = [];
+
+let examWords = [];
+let examSubmitted = false;
+let userGrades = [];
+
+// DOM 요소
+const setListElement = document.getElementById("setList");
+const mobileSetSelect = document.getElementById("mobileSetSelect");
+const setNameInput = document.getElementById("setNameInput");
+const csvFileInput = document.getElementById("csvFileInput");
+const currentSetTitle = document.getElementById("currentSetTitle");
+
+const cardModeView = document.getElementById("cardModeView");
+const learnModeView = document.getElementById("learnModeView");
+const resultModeView = document.getElementById("resultModeView");
+const examModeView = document.getElementById("examModeView");
+const recordModeView = document.getElementById("recordModeView");
+
+const cardElement = document.getElementById("card");
+const cardStatus = document.getElementById("cardStatus");
+const prevBtn = document.getElementById("prevBtn");
+const nextBtn = document.getElementById("nextBtn");
+
+const quizQuestion = document.getElementById("quizQuestion");
+const optionsGrid = document.getElementById("optionsGrid");
+const quizStatus = document.getElementById("quizStatus");
+const resultScore = document.getElementById("resultScore");
+const wrongList = document.getElementById("wrongList");
+
+const examTbody = document.getElementById("examTbody");
+const correctHeader = document.getElementById("correctHeader");
+const gradeHeader = document.getElementById("gradeHeader");
+const submitExamBtn = document.getElementById("submitExamBtn");
+const saveExamBtn = document.getElementById("saveExamBtn");
+const resetExamBtn = document.getElementById("resetExamBtn");
+const scoreText = document.getElementById("scoreText");
+
+const recordTable = document.getElementById("recordTable");
+const recordTbody = document.getElementById("recordTbody");
+const noRecordMsg = document.getElementById("noRecordMsg");
+const wrongModal = document.getElementById("wrongModal");
+const modalWrongList = document.getElementById("modalWrongList");
+
+// 시작 시 클라우드 데이터 로드
+initApp();
+
+async function initApp() {
+  await loadSetsFromCloud();
+  await loadRecordsFromCloud();
+
+  const keys = Object.keys(studySets);
+  if (keys.length > 0) {
+    selectSet(keys[0]);
+  } else {
+    currentSetTitle.innerText = "단어 세트를 CSV 파일로 등록해 주세요.";
+    cardElement.innerText = "등록된 세트가 없습니다.";
+  }
 }
 
-body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background-color: #f8fafc;
-  color: #1e293b;
-  min-height: 100vh;
-  display: flex;
+// ------------------------------------------
+// Supabase 클라우드 데이터 통신
+// ------------------------------------------
+async function loadSetsFromCloud() {
+  try {
+    const { data, error } = await supabaseClient
+      .from("voca_sets")
+      .select("*")
+      .order("created_at", { ascending: true });
+
+    if (error) throw error;
+
+    studySets = {};
+    if (data) {
+      data.forEach(row => {
+        studySets[row.name] = row.words;
+      });
+    }
+    renderSetList();
+    renderMobileSelect();
+  } catch (err) {
+    console.error("단어 세트 로드 실패:", err.message);
+  }
 }
 
-/* ================================================= */
-/* 1. 반응형 분기 클래스 */
-/* ================================================= */
-.mobile-only {
-  display: none !important;
+async function loadRecordsFromCloud() {
+  try {
+    const { data, error } = await supabaseClient
+      .from("voca_records")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    if (data) {
+      historyRecords = data.map(r => ({
+        id: r.id,
+        date: r.date_str,
+        setName: r.set_name,
+        type: r.type,
+        score: r.score,
+        rate: r.rate,
+        wrongs: r.wrongs
+      }));
+    }
+  } catch (err) {
+    console.error("기록 로드 실패:", err.message);
+  }
 }
 
-/* ================================================= */
-/* 2. PC 기본 레이아웃 (데스크톱) */
-/* ================================================= */
-.sidebar {
-  width: 260px;
-  background: #ffffff;
-  border-right: 1px solid #e2e8f0;
-  display: flex;
-  flex-direction: column;
-  padding: 20px;
-  height: 100vh;
+// ------------------------------------------
+// 화면 모드 전환
+// ------------------------------------------
+function switchMode(mode) {
+  currentMode = mode;
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+
+  cardModeView.style.display = "none";
+  learnModeView.style.display = "none";
+  resultModeView.style.display = "none";
+  examModeView.style.display = "none";
+  recordModeView.style.display = "none";
+
+  if (mode === 'card') {
+    document.getElementById("tabCard").classList.add("active");
+    cardModeView.style.display = "flex";
+    updateCard();
+    updateButtons();
+  } else if (mode === 'learn') {
+    document.getElementById("tabLearn").classList.add("active");
+    startLearnMode();
+  } else if (mode === 'exam') {
+    document.getElementById("tabExam").classList.add("active");
+    startExamMode();
+  } else if (mode === 'record') {
+    document.getElementById("tabRecord").classList.add("active");
+    startRecordMode();
+  }
 }
 
-.sidebar h2 {
-  font-size: 18px;
-  margin-bottom: 12px;
+function selectSet(name) {
+  if (!name) return;
+  currentSetName = name;
+  words = studySets[name] || [];
+  currentIndex = 0;
+  currentSetTitle.innerText = `현재 세트: ${name} (${words.length}단어)`;
+  
+  renderSetList();
+  if (mobileSetSelect) mobileSetSelect.value = name;
+
+  if (currentMode === 'card') {
+    updateCard();
+    updateButtons();
+  } else if (currentMode === 'learn') {
+    startLearnMode();
+  } else if (currentMode === 'exam') {
+    startExamMode();
+  }
 }
 
-.add-set-box {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 16px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid #e2e8f0;
+// ------------------------------------------
+// 1) 단어장 모드
+// ------------------------------------------
+function updateCard() {
+  if (words.length === 0) {
+    cardElement.innerText = "단어가 비어 있습니다.";
+    cardStatus.innerText = "0 / 0";
+    return;
+  }
+  isFlipped = false;
+  cardElement.innerText = words[currentIndex].q;
+  cardElement.style.color = "#1e293b";
+  cardStatus.innerText = `${currentIndex + 1} / ${words.length}`;
 }
 
-.add-set-box input[type="text"] {
-  padding: 8px 12px;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  font-size: 14px;
+function flipCard() {
+  if (words.length === 0) return;
+  isFlipped = !isFlipped;
+  if (isFlipped) {
+    cardElement.innerText = words[currentIndex].a;
+    cardElement.style.color = "#0284c7";
+  } else {
+    cardElement.innerText = words[currentIndex].q;
+    cardElement.style.color = "#1e293b";
+  }
 }
 
-.upload-btn-label {
-  text-align: center;
-  background: #0ea5e9;
-  color: white;
-  padding: 8px;
-  border-radius: 6px;
-  font-size: 13px;
-  cursor: pointer;
-  font-weight: 500;
+function prevCard() {
+  if (currentIndex > 0) {
+    currentIndex--;
+    updateCard();
+    updateButtons();
+  }
 }
 
-#csvFileInput {
-  display: none;
+function nextCard() {
+  if (currentIndex < words.length - 1) {
+    currentIndex++;
+    updateCard();
+    updateButtons();
+  }
 }
 
-.set-list {
-  list-style: none;
-  overflow-y: auto;
-  flex: 1;
+function updateButtons() {
+  prevBtn.disabled = (currentIndex === 0 || words.length === 0);
+  nextBtn.disabled = (currentIndex === words.length - 1 || words.length === 0);
 }
 
-.set-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px;
-  margin-bottom: 6px;
-  border-radius: 6px;
-  cursor: pointer;
-  background: #f1f5f9;
-  font-size: 14px;
-}
-
-.set-item.active {
-  background: #0284c7;
-  color: white;
-  font-weight: bold;
-}
-
-.delete-btn {
-  background: none;
-  border: none;
-  color: #94a3b8;
-  font-size: 16px;
-  cursor: pointer;
-}
-
-.set-item.active .delete-btn {
-  color: white;
-}
-
-.main-wrapper {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  overflow-y: auto;
-}
-
-.top-nav {
-  background: #ffffff;
-  border-bottom: 1px solid #e2e8f0;
-  display: flex;
-  align-items: center;
-  padding: 12px 24px;
-  gap: 12px;
-  position: sticky;
-  top: 0;
-  z-index: 50;
-}
-
-.nav-buttons {
-  display: flex;
-  gap: 8px;
-}
-
-.tab-btn {
-  padding: 8px 18px;
-  font-size: 15px;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  background: transparent;
-  color: #64748b;
-  font-weight: bold;
-  transition: background-color 0.15s;
-}
-
-.tab-btn.active {
-  background: #0284c7;
-  color: white;
-}
-
-.main-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 24px;
-  width: 100%;
-}
-
-.current-set-title {
-  font-size: 15px;
-  color: #64748b;
-  margin-bottom: 16px;
-}
-
-.mode-view {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-/* ================================================= */
-/* 3. 모드별 컴포넌트 */
-/* ================================================= */
-
-/* 1) 단어장 카드 */
-.card {
-  width: 100%;
-  max-width: 440px;
-  min-height: 250px;
-  background: #ffffff;
-  border-radius: 16px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 24px;
-  font-weight: bold;
-  cursor: pointer;
-  text-align: center;
-  padding: 28px;
-  line-height: 1.5;
-  user-select: none;
-  word-break: keep-all;
-}
-
-.status {
-  margin-top: 14px;
-  color: #64748b;
-  font-size: 15px;
-}
-
-.btn-group {
-  margin-top: 20px;
-  display: flex;
-  gap: 12px;
-  width: 100%;
-  max-width: 440px;
-}
-
-.btn-group button {
-  flex: 1;
-  padding: 12px 20px;
-  font-size: 16px;
-  border: none;
-  border-radius: 10px;
-  cursor: pointer;
-  background: #0284c7;
-  color: white;
-  font-weight: 600;
-}
-
-.btn-group button:disabled {
-  background: #cbd5e1 !important;
-  cursor: not-allowed;
-}
-
-/* 2) 4지선다 퀴즈 */
-.quiz-container {
-  max-width: 480px;
-  width: 100%;
-}
-
-.quiz-question-card {
-  width: 100%;
-  background: #ffffff;
-  border-radius: 14px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
-  padding: 24px;
-  text-align: center;
-  font-size: 24px;
-  font-weight: bold;
-  margin-bottom: 16px;
-  word-break: keep-all;
-}
-
-.options-grid {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.option-btn {
-  width: 100%;
-  padding: 16px;
-  background: #ffffff;
-  border: 1.5px solid #cbd5e1;
-  border-radius: 12px;
-  font-size: 16px;
-  text-align: left;
-  cursor: pointer;
-  line-height: 1.4;
-  color: #334155;
-  word-break: keep-all;
-}
-
-.option-btn:active {
-  background: #e0f2fe;
-  border-color: #0284c7;
-}
-
-/* 결과 창 & 오답 */
-.result-container {
-  max-width: 500px;
-  width: 100%;
-  background: #ffffff;
-  border-radius: 14px;
-  padding: 24px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-}
-
-.result-score {
-  font-size: 24px;
-  font-weight: bold;
-  color: #0284c7;
-  margin: 14px 0;
-  text-align: center;
-}
-
-.wrong-list {
-  width: 100%;
-  max-height: 300px;
-  overflow-y: auto;
-  border-top: 1px solid #e2e8f0;
-  margin-bottom: 16px;
-}
-
-.wrong-item {
-  padding: 12px 0;
-  border-bottom: 1px solid #f1f5f9;
-  font-size: 14px;
-  line-height: 1.4;
-}
-
-.wrong-word {
-  font-weight: bold;
-  font-size: 15px;
-  margin-bottom: 4px;
-}
-
-.wrong-answer {
-  color: #ef4444;
-}
-
-.correct-answer {
-  color: #10b981;
-}
-
-.action-btn {
-  padding: 10px 20px;
-  font-size: 15px;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  background: #0284c7;
-  color: white;
-  font-weight: 500;
-}
-
-/* 3) 테이블 (시험 & 기록 공통) */
-.exam-container, .record-container {
-  max-width: 850px;
-  width: 100%;
-}
-
-.data-table {
-  width: 100%;
-  background: #ffffff;
-  border-radius: 10px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-  border-collapse: collapse;
-  overflow: hidden;
-}
-
-.data-table th, .data-table td {
-  padding: 12px 14px;
-  text-align: left;
-  border-bottom: 1px solid #f1f5f9;
-  font-size: 14px;
-}
-
-.data-table th {
-  background: #f8fafc;
-  color: #475569;
-  font-weight: 600;
-}
-
-.exam-input {
-  width: 100%;
-  padding: 8px 10px;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  font-size: 14px;
-}
-
-.grade-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
-  border: 1px solid #cbd5e1;
-  background: white;
-  font-weight: bold;
-  cursor: pointer;
-}
-
-.grade-btn.btn-o.selected {
-  background: #10b981;
-  color: white;
-  border-color: #10b981;
-}
-
-.grade-btn.btn-x.selected {
-  background: #ef4444;
-  color: white;
-  border-color: #ef4444;
-}
-
-.exam-bottom-panel {
-  position: sticky;
-  bottom: 16px;
-  background: #ffffff;
-  padding: 14px 20px;
-  border-radius: 10px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  margin-top: 14px;
-  border: 1px solid #e2e8f0;
-}
-
-.record-header {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.delete-all-btn {
-  background: #ef4444;
-  padding: 6px 12px;
-  font-size: 13px;
-}
-
-.no-data-msg {
-  padding: 40px;
-  text-align: center;
-  color: #94a3b8;
-  background: #ffffff;
-  width: 100%;
-  border-radius: 10px;
-}
-
-.view-wrong-btn {
-  padding: 6px 10px;
-  font-size: 12px;
-  background: #fee2e2;
-  color: #ef4444;
-  border: 1px solid #fca5a5;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: bold;
-}
-
-/* 모달 팝업 */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 1000;
-  padding: 16px;
-}
-
-.modal-content {
-  background: #ffffff;
-  border-radius: 14px;
-  padding: 20px;
-  width: 100%;
-  max-width: 440px;
-}
-
-/* ================================================= */
-/* 4. 모바일 화면 전용 최적화 (가로 폭 768px 이하) */
-/* ================================================= */
-@media (max-width: 768px) {
-  /* PC 전용 요소 완전 숨김 (사이드바, 시험 버튼) */
-  .pc-only {
-    display: none !important;
+// ------------------------------------------
+// 2) 학습(4지선다) 모드
+// ------------------------------------------
+function startLearnMode() {
+  if (!words || words.length === 0) {
+    alert("학습할 단어가 없습니다.");
+    switchMode("card");
+    return;
+  }
+  if (words.length < 4) {
+    alert("4지선다 보기를 만들려면 단어가 최소 4개 이상이어야 합니다.");
+    switchMode("card");
+    return;
   }
 
-  /* 모바일 전용 요소 활성화 */
-  .mobile-only {
-    display: block !important;
+  quizQueue = [...words].sort(() => Math.random() - 0.5);
+  quizIndex = 0;
+  quizWrongs = [];
+
+  cardModeView.style.display = "none";
+  resultModeView.style.display = "none";
+  examModeView.style.display = "none";
+  recordModeView.style.display = "none";
+  learnModeView.style.display = "flex";
+
+  renderQuizStep();
+}
+
+function renderQuizStep() {
+  if (quizIndex >= quizQueue.length) {
+    finishQuiz();
+    return;
   }
 
-  body {
-    flex-direction: column;
-    height: auto;
-    min-height: 100vh;
-    overflow-x: hidden;
+  const current = quizQueue[quizIndex];
+  quizQuestion.innerText = current.q;
+  quizStatus.innerText = `${quizIndex + 1} / ${quizQueue.length}`;
+
+  const otherPool = words.filter(w => w.q !== current.q).sort(() => Math.random() - 0.5);
+  const choices = [current.a, otherPool[0].a, otherPool[1].a, otherPool[2].a].sort(() => Math.random() - 0.5);
+
+  optionsGrid.innerHTML = "";
+  choices.forEach(ans => {
+    const btn = document.createElement("button");
+    btn.className = "option-btn";
+    btn.innerText = ans;
+    btn.onclick = () => {
+      if (ans !== current.a) {
+        quizWrongs.push({ q: current.q, selected: ans, correct: current.a });
+      }
+      quizIndex++;
+      renderQuizStep();
+    };
+    optionsGrid.appendChild(btn);
+  });
+}
+
+async function finishQuiz() {
+  learnModeView.style.display = "none";
+  resultModeView.style.display = "flex";
+
+  const total = quizQueue.length;
+  const correctCount = total - quizWrongs.length;
+  resultScore.innerText = `점수: ${correctCount} / ${total}`;
+
+  wrongList.innerHTML = "";
+  if (quizWrongs.length === 0) {
+    wrongList.innerHTML = "<div style='text-align:center; padding:16px; color:#10b981; font-weight:bold;'>모든 문제를 맞혔습니다!</div>";
+  } else {
+    quizWrongs.forEach(w => {
+      const div = document.createElement("div");
+      div.className = "wrong-item";
+      div.innerHTML = `
+        <div class="wrong-word">${w.q}</div>
+        <div class="wrong-answer">내가 고른 답: ${w.selected}</div>
+        <div class="correct-answer">정답: ${w.correct}</div>
+      `;
+      wrongList.appendChild(div);
+    });
   }
 
-  .main-wrapper {
-    height: auto;
-    min-height: 100vh;
-    overflow-y: visible;
+  await saveRecordToCloud("학습", currentSetName, correctCount, total, quizWrongs);
+}
+
+// ------------------------------------------
+// 3) 시험 모드 (PC 전용)
+// ------------------------------------------
+function startExamMode() {
+  if (!words || words.length === 0) {
+    alert("시험 볼 단어가 없습니다.");
+    switchMode("card");
+    return;
   }
 
-  /* 모바일 상단 바: 세트 선택 + 탭 3개 균등 배치 */
-  .top-nav {
-    flex-direction: column;
-    align-items: stretch;
-    padding: 12px 16px;
-    gap: 10px;
+  examModeView.style.display = "flex";
+  examSubmitted = false;
+  examWords = [...words].sort(() => Math.random() - 0.5);
+  userGrades = new Array(examWords.length).fill(null);
+
+  correctHeader.style.display = "none";
+  gradeHeader.style.display = "none";
+  submitExamBtn.style.display = "inline-block";
+  saveExamBtn.style.display = "none";
+  resetExamBtn.style.display = "none";
+  scoreText.innerText = "답안 작성 중...";
+
+  examTbody.innerHTML = "";
+  examWords.forEach((word, idx) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${idx + 1}</td>
+      <td style="font-weight: 600;">${word.q}</td>
+      <td><input type="text" class="exam-input" id="examInput_${idx}" placeholder="뜻 입력"></td>
+      <td class="exam-ans-cell" style="display: none; color: #0284c7; font-weight: 500;">${word.a}</td>
+      <td class="exam-grade-cell" style="display: none; text-align: center;">
+        <div style="display: flex; gap: 4px; justify-content: center;">
+          <button class="grade-btn btn-o" onclick="setGrade(${idx}, 'O')">O</button>
+          <button class="grade-btn btn-x" onclick="setGrade(${idx}, 'X')">X</button>
+        </div>
+      </td>
+    `;
+    examTbody.appendChild(tr);
+  });
+}
+
+function submitExam() {
+  examSubmitted = true;
+  document.querySelectorAll(".exam-input").forEach(i => {
+    i.disabled = true;
+    i.style.background = "#f8fafc";
+  });
+
+  correctHeader.style.display = "table-cell";
+  gradeHeader.style.display = "table-cell";
+  document.querySelectorAll(".exam-ans-cell").forEach(td => td.style.display = "table-cell");
+  document.querySelectorAll(".exam-grade-cell").forEach(td => td.style.display = "table-cell");
+
+  submitExamBtn.style.display = "none";
+  saveExamBtn.style.display = "inline-block";
+  resetExamBtn.style.display = "inline-block";
+
+  updateExamScore();
+}
+
+function setGrade(idx, type) {
+  if (!examSubmitted) return;
+  userGrades[idx] = type;
+
+  const tr = examTbody.children[idx];
+  const btnO = tr.querySelector(".btn-o");
+  const btnX = tr.querySelector(".btn-x");
+
+  if (type === 'O') {
+    btnO.classList.add("selected");
+    btnX.classList.remove("selected");
+  } else {
+    btnX.classList.add("selected");
+    btnO.classList.remove("selected");
+  }
+  updateExamScore();
+}
+
+function updateExamScore() {
+  const total = examWords.length;
+  const oCount = userGrades.filter(g => g === 'O').length;
+  const xCount = userGrades.filter(g => g === 'X').length;
+  const checked = oCount + xCount;
+  const rate = checked > 0 ? ((oCount / checked) * 100).toFixed(1) : 0;
+
+  scoreText.innerHTML = `맞음: <b>${oCount}</b> / ${total} (정답률: <b>${rate}%</b>) | 채점 진행: ${checked}/${total}`;
+}
+
+async function saveExamRecord() {
+  const total = examWords.length;
+  const oCount = userGrades.filter(g => g === 'O').length;
+  const checked = userGrades.filter(g => g !== null).length;
+
+  if (checked < total) {
+    if (!confirm(`아직 채점하지 않은 문항이 있습니다. (${checked}/${total})\n이대로 저장할까요?`)) {
+      return;
+    }
   }
 
-  .mobile-set-selector select {
-    width: 100%;
-    padding: 12px 14px;
-    border-radius: 10px;
-    border: 1.5px solid #0284c7;
-    background: #ffffff;
-    font-size: 16px;
-    font-weight: 600;
-    color: #0f172a;
-    outline: none;
+  const wrongs = [];
+  userGrades.forEach((grade, idx) => {
+    if (grade === 'X') {
+      const userVal = document.getElementById(`examInput_${idx}`)?.value.trim() || "(미입력)";
+      wrongs.push({ q: examWords[idx].q, selected: userVal, correct: examWords[idx].a });
+    }
+  });
+
+  await saveRecordToCloud("시험", currentSetName, oCount, total, wrongs);
+  alert("시험 기록이 클라우드에 저장되었습니다.");
+  saveExamBtn.disabled = true;
+}
+
+// ------------------------------------------
+// 4) 기록 모드 및 모달
+// ------------------------------------------
+async function saveRecordToCloud(type, setName, correct, total, wrongArr) {
+  const now = new Date();
+  const dateStr = `${now.getMonth() + 1}/${now.getDate()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const rate = ((correct / total) * 100).toFixed(1);
+
+  const { error } = await supabaseClient.from("voca_records").insert([
+    {
+      date_str: dateStr,
+      set_name: setName || "세트 미지정",
+      type: type,
+      score: `${correct} / ${total}`,
+      rate: `${rate}%`,
+      wrongs: wrongArr
+    }
+  ]);
+
+  if (error) {
+    console.error("기록 저장 실패:", error.message);
+  } else {
+    await loadRecordsFromCloud();
+  }
+}
+
+function startRecordMode() {
+  recordModeView.style.display = "flex";
+  recordTbody.innerHTML = "";
+
+  if (historyRecords.length === 0) {
+    recordTable.style.display = "none";
+    noRecordMsg.style.display = "block";
+    return;
   }
 
-  .nav-buttons {
-    display: flex;
-    width: 100%;
-    gap: 6px;
+  recordTable.style.display = "table";
+  noRecordMsg.style.display = "none";
+
+  historyRecords.forEach(rec => {
+    const tr = document.createElement("tr");
+    const hasWrongs = rec.wrongs && rec.wrongs.length > 0;
+
+    tr.innerHTML = `
+      <td>${rec.date}</td>
+      <td style="font-weight: 500;">${rec.setName}</td>
+      <td><span>${rec.type}</span></td>
+      <td><b>${rec.score}</b></td>
+      <td style="color: #0284c7; font-weight: bold;">${rec.rate}</td>
+      <td style="text-align: center;">
+        ${hasWrongs 
+          ? `<button class="view-wrong-btn" onclick="openWrongModal(${rec.id})">${rec.wrongs.length}개 보기</button>` 
+          : `<span style="color: #10b981; font-size: 13px;">만점</span>`}
+      </td>
+    `;
+    recordTbody.appendChild(tr);
+  });
+}
+
+function openWrongModal(id) {
+  const target = historyRecords.find(r => r.id === id);
+  if (!target || !target.wrongs) return;
+
+  modalWrongList.innerHTML = "";
+  target.wrongs.forEach(w => {
+    const div = document.createElement("div");
+    div.className = "wrong-item";
+    div.innerHTML = `
+      <div class="wrong-word">${w.q}</div>
+      <div class="wrong-answer">내가 적은 답: ${w.selected}</div>
+      <div class="correct-answer">정답: ${w.correct}</div>
+    `;
+    modalWrongList.appendChild(div);
+  });
+  wrongModal.style.display = "flex";
+}
+
+function closeModal() {
+  wrongModal.style.display = "none";
+}
+
+async function clearRecords() {
+  if (!confirm("클라우드에 보관된 모든 기록을 영구 삭제할까요?")) return;
+
+  const { error } = await supabaseClient.from("voca_records").delete().neq("id", 0);
+  if (error) {
+    alert("기록 삭제 실패: " + error.message);
+    return;
   }
 
-  .tab-btn {
-    flex: 1;
-    text-align: center;
-    padding: 12px 0;
-    font-size: 15px;
-    border-radius: 8px;
-  }
+  historyRecords = [];
+  startRecordMode();
+}
 
-  /* 모바일 메인 영역 */
-  .main-content {
-    padding: 16px 14px 40px 14px;
-  }
+// ------------------------------------------
+// 세트 등록 및 렌더링
+// ------------------------------------------
+csvFileInput.addEventListener("change", function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
 
-  /* 플래시카드 터치 최적화 */
-  .card {
-    min-height: 280px;
-    font-size: 26px;
-    border-radius: 16px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.07);
-    padding: 20px;
-  }
+  let name = setNameInput.value.trim() || file.name.replace(/\.[^/.]+$/, "");
+  const reader = new FileReader();
 
-  .btn-group {
-    max-width: 100%;
-  }
+  reader.onload = async function(evt) {
+    const parsed = parseData(evt.target.result);
+    if (parsed.length === 0) {
+      alert("단어를 읽을 수 없습니다. CSV 형식을 확인해 주세요.");
+      return;
+    }
 
-  .btn-group button {
-    padding: 14px;
-    font-size: 17px;
-    border-radius: 12px;
-  }
+    const { error } = await supabaseClient
+      .from("voca_sets")
+      .upsert({ name: name, words: parsed }, { onConflict: "name" });
 
-  /* 퀴즈 모드 */
-  .quiz-question-card {
-    font-size: 22px;
-    padding: 22px 16px;
-  }
+    if (error) {
+      alert("클라우드 저장 실패: " + error.message);
+      return;
+    }
 
-  .option-btn {
-    padding: 16px 14px;
-    font-size: 16px;
-    border-radius: 12px;
-  }
+    setNameInput.value = "";
+    csvFileInput.value = "";
+    await loadSetsFromCloud();
+    selectSet(name);
+  };
+  reader.readAsText(file, "UTF-8");
+});
 
-  /* 기록 모드 모바일 테이블 축소 */
-  .data-table th, .data-table td {
-    padding: 10px 8px;
-    font-size: 13px;
-  }
+function renderSetList() {
+  setListElement.innerHTML = "";
+  Object.keys(studySets).forEach(name => {
+    const li = document.createElement("li");
+    li.className = `set-item ${name === currentSetName ? 'active' : ''}`;
+
+    const span = document.createElement("span");
+    span.innerText = name;
+    span.style.flex = "1";
+    span.onclick = () => selectSet(name);
+
+    const del = document.createElement("button");
+    del.className = "delete-btn";
+    del.innerHTML = "&times;";
+    del.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(`'${name}' 세트를 클라우드에서 영구 삭제할까요?`)) return;
+
+      const { error } = await supabaseClient.from("voca_sets").delete().eq("name", name);
+      if (error) {
+        alert("삭제 실패: " + error.message);
+        return;
+      }
+
+      await loadSetsFromCloud();
+      const rem = Object.keys(studySets);
+      if (rem.length > 0) selectSet(rem[0]);
+      else {
+        currentSetName = "";
+        words = [];
+        updateCard();
+        renderSetList();
+        renderMobileSelect();
+      }
+    };
+
+    li.appendChild(span);
+    li.appendChild(del);
+    setListElement.appendChild(li);
+  });
+}
+
+function renderMobileSelect() {
+  if (!mobileSetSelect) return;
+  mobileSetSelect.innerHTML = "";
+  const keys = Object.keys(studySets);
+  keys.forEach(name => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.innerText = name;
+    if (name === currentSetName) opt.selected = true;
+    mobileSetSelect.appendChild(opt);
+  });
+}
+
+function parseData(text) {
+  const clean = text.replace(/^\uFEFF/, "");
+  const lines = clean.trim().split(/\r?\n/);
+  return lines.map(line => {
+    if (line.includes("\t")) {
+      const parts = line.split("\t");
+      return { q: parts[0]?.trim(), a: parts[1]?.trim() };
+    }
+    const res = [];
+    let inQuote = false;
+    let entry = "";
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') inQuote = !inQuote;
+      else if (c === ',' && !inQuote) {
+        res.push(entry.trim());
+        entry = "";
+      } else {
+        entry += c;
+      }
+    }
+    res.push(entry.trim());
+    if (res.length >= 2) {
+      return {
+        q: res[0].replace(/^"|"$/g, '').trim(),
+        a: res.slice(1).join(", ").replace(/^"|"$/g, '').trim()
+      };
+    }
+    return null;
+  }).filter(item => item && item.q && item.a);
 }
