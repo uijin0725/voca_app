@@ -1,15 +1,33 @@
 // ==========================================
-// 1. Supabase 연동 설정 (본인 정보 입력)
+// 1. Supabase 연동 설정
 // ==========================================
-const SUPABASE_URL = "여기에_Project_URL_붙여넣기";
-const SUPABASE_KEY = "여기에_publishable_또는_anon_key_붙여넣기";
-const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+// [중요] 아래 큰따옴표 안에 본인의 실제 주소와 키를 넣어주세요.
+const SUPABASE_URL = "https://dgqhoawgmbfaqbzgjexu.supabase.co";
+const SUPABASE_KEY = "sb_publishable_41UG8gEXQxji7VsL7NBXkQ_vstt0RcE";
+
+let supabaseClient = null;
+
+// URL 및 키 유효성 검사 (스크립트 멈춤 방지)
+try {
+  if (SUPABASE_URL.startsWith("http") && !SUPABASE_URL.includes("여기에_")) {
+    supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  }
+} catch (e) {
+  console.error("Supabase 초기화 오류:", e);
+}
 
 // ==========================================
 // 2. 상태 관리 변수
 // ==========================================
-let studySets = {};
-let historyRecords = [];
+let studySets = JSON.parse(localStorage.getItem("my_voca_sets")) || {
+  "기본 예제": [
+    { q: "apple", a: "사과" },
+    { q: "banana", a: "바나나" },
+    { q: "cherry", a: "체리" },
+    { q: "grape", a: "포도" }
+  ]
+};
+let historyRecords = JSON.parse(localStorage.getItem("my_voca_records")) || [];
 let currentSetName = "";
 let words = [];
 let currentMode = "card";
@@ -25,7 +43,7 @@ let examWords = [];
 let examSubmitted = false;
 let userGrades = [];
 
-// DOM 요소
+// DOM 요소 캐싱
 const setListElement = document.getElementById("setList");
 const mobileSetSelect = document.getElementById("mobileSetSelect");
 const setNameInput = document.getElementById("setNameInput");
@@ -63,12 +81,18 @@ const noRecordMsg = document.getElementById("noRecordMsg");
 const wrongModal = document.getElementById("wrongModal");
 const modalWrongList = document.getElementById("modalWrongList");
 
-// 시작 시 클라우드 데이터 로드
-initApp();
+// 애플리케이션 시작
+window.addEventListener("DOMContentLoaded", initApp);
 
 async function initApp() {
-  await loadSetsFromCloud();
-  await loadRecordsFromCloud();
+  if (supabaseClient) {
+    await loadSetsFromCloud();
+    await loadRecordsFromCloud();
+  } else {
+    console.warn("Supabase 키가 설정되지 않아 로컬 모드로 작동합니다.");
+    renderSetList();
+    renderMobileSelect();
+  }
 
   const keys = Object.keys(studySets);
   if (keys.length > 0) {
@@ -76,13 +100,15 @@ async function initApp() {
   } else {
     currentSetTitle.innerText = "단어 세트를 CSV 파일로 등록해 주세요.";
     cardElement.innerText = "등록된 세트가 없습니다.";
+    cardStatus.innerText = "0 / 0";
   }
 }
 
 // ------------------------------------------
-// Supabase 클라우드 데이터 통신
+// Supabase 통신
 // ------------------------------------------
 async function loadSetsFromCloud() {
+  if (!supabaseClient) return;
   try {
     const { data, error } = await supabaseClient
       .from("voca_sets")
@@ -91,20 +117,22 @@ async function loadSetsFromCloud() {
 
     if (error) throw error;
 
-    studySets = {};
-    if (data) {
+    if (data && data.length > 0) {
+      studySets = {};
       data.forEach(row => {
         studySets[row.name] = row.words;
       });
+      localStorage.setItem("my_voca_sets", JSON.stringify(studySets));
     }
     renderSetList();
     renderMobileSelect();
   } catch (err) {
-    console.error("단어 세트 로드 실패:", err.message);
+    console.error("클라우드 단어 세트 로드 실패:", err.message);
   }
 }
 
 async function loadRecordsFromCloud() {
+  if (!supabaseClient) return;
   try {
     const { data, error } = await supabaseClient
       .from("voca_records")
@@ -123,14 +151,15 @@ async function loadRecordsFromCloud() {
         rate: r.rate,
         wrongs: r.wrongs
       }));
+      localStorage.setItem("my_voca_records", JSON.stringify(historyRecords));
     }
   } catch (err) {
-    console.error("기록 로드 실패:", err.message);
+    console.error("클라우드 기록 로드 실패:", err.message);
   }
 }
 
 // ------------------------------------------
-// 화면 모드 전환
+// 모드 전환
 // ------------------------------------------
 function switchMode(mode) {
   currentMode = mode;
@@ -151,7 +180,8 @@ function switchMode(mode) {
     document.getElementById("tabLearn").classList.add("active");
     startLearnMode();
   } else if (mode === 'exam') {
-    document.getElementById("tabExam").classList.add("active");
+    const tabExam = document.getElementById("tabExam");
+    if (tabExam) tabExam.classList.add("active");
     startExamMode();
   } else if (mode === 'record') {
     document.getElementById("tabRecord").classList.add("active");
@@ -183,7 +213,7 @@ function selectSet(name) {
 // 1) 단어장 모드
 // ------------------------------------------
 function updateCard() {
-  if (words.length === 0) {
+  if (!words || words.length === 0) {
     cardElement.innerText = "단어가 비어 있습니다.";
     cardStatus.innerText = "0 / 0";
     return;
@@ -195,7 +225,7 @@ function updateCard() {
 }
 
 function flipCard() {
-  if (words.length === 0) return;
+  if (!words || words.length === 0) return;
   isFlipped = !isFlipped;
   if (isFlipped) {
     cardElement.innerText = words[currentIndex].a;
@@ -223,8 +253,8 @@ function nextCard() {
 }
 
 function updateButtons() {
-  prevBtn.disabled = (currentIndex === 0 || words.length === 0);
-  nextBtn.disabled = (currentIndex === words.length - 1 || words.length === 0);
+  prevBtn.disabled = (currentIndex === 0 || !words || words.length === 0);
+  nextBtn.disabled = (!words || words.length === 0 || currentIndex === words.length - 1);
 }
 
 // ------------------------------------------
@@ -308,11 +338,11 @@ async function finishQuiz() {
     });
   }
 
-  await saveRecordToCloud("학습", currentSetName, correctCount, total, quizWrongs);
+  await saveRecordHandler("학습", currentSetName, correctCount, total, quizWrongs);
 }
 
 // ------------------------------------------
-// 3) 시험 모드 (PC 전용)
+// 3) 시험 모드
 // ------------------------------------------
 function startExamMode() {
   if (!words || words.length === 0) {
@@ -418,34 +448,48 @@ async function saveExamRecord() {
     }
   });
 
-  await saveRecordToCloud("시험", currentSetName, oCount, total, wrongs);
-  alert("시험 기록이 클라우드에 저장되었습니다.");
+  await saveRecordHandler("시험", currentSetName, oCount, total, wrongs);
+  alert("시험 기록이 저장되었습니다.");
   saveExamBtn.disabled = true;
 }
 
 // ------------------------------------------
 // 4) 기록 모드 및 모달
 // ------------------------------------------
-async function saveRecordToCloud(type, setName, correct, total, wrongArr) {
+async function saveRecordHandler(type, setName, correct, total, wrongArr) {
   const now = new Date();
   const dateStr = `${now.getMonth() + 1}/${now.getDate()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   const rate = ((correct / total) * 100).toFixed(1);
 
-  const { error } = await supabaseClient.from("voca_records").insert([
-    {
-      date_str: dateStr,
-      set_name: setName || "세트 미지정",
-      type: type,
-      score: `${correct} / ${total}`,
-      rate: `${rate}%`,
-      wrongs: wrongArr
-    }
-  ]);
+  const newRec = {
+    id: Date.now(),
+    date: dateStr,
+    setName: setName || "세트 미지정",
+    type: type,
+    score: `${correct} / ${total}`,
+    rate: `${rate}%`,
+    wrongs: wrongArr
+  };
 
-  if (error) {
-    console.error("기록 저장 실패:", error.message);
-  } else {
-    await loadRecordsFromCloud();
+  historyRecords.unshift(newRec);
+  localStorage.setItem("my_voca_records", JSON.stringify(historyRecords));
+
+  if (supabaseClient) {
+    try {
+      await supabaseClient.from("voca_records").insert([
+        {
+          date_str: dateStr,
+          set_name: setName || "세트 미지정",
+          type: type,
+          score: `${correct} / ${total}`,
+          rate: `${rate}%`,
+          wrongs: wrongArr
+        }
+      ]);
+      await loadRecordsFromCloud();
+    } catch (e) {
+      console.error("클라우드 기록 저장 실패:", e);
+    }
   }
 }
 
@@ -453,7 +497,7 @@ function startRecordMode() {
   recordModeView.style.display = "flex";
   recordTbody.innerHTML = "";
 
-  if (historyRecords.length === 0) {
+  if (!historyRecords || historyRecords.length === 0) {
     recordTable.style.display = "none";
     noRecordMsg.style.display = "block";
     return;
@@ -505,53 +549,68 @@ function closeModal() {
 }
 
 async function clearRecords() {
-  if (!confirm("클라우드에 보관된 모든 기록을 영구 삭제할까요?")) return;
-
-  const { error } = await supabaseClient.from("voca_records").delete().neq("id", 0);
-  if (error) {
-    alert("기록 삭제 실패: " + error.message);
-    return;
-  }
+  if (!confirm("모든 기록을 삭제할까요?")) return;
 
   historyRecords = [];
+  localStorage.removeItem("my_voca_records");
+
+  if (supabaseClient) {
+    try {
+      await supabaseClient.from("voca_records").delete().neq("id", 0);
+    } catch (e) {
+      console.error("클라우드 삭제 오류:", e);
+    }
+  }
+
   startRecordMode();
 }
 
 // ------------------------------------------
 // 세트 등록 및 렌더링
 // ------------------------------------------
-csvFileInput.addEventListener("change", function(e) {
-  const file = e.target.files[0];
-  if (!file) return;
+if (csvFileInput) {
+  csvFileInput.addEventListener("change", function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
 
-  let name = setNameInput.value.trim() || file.name.replace(/\.[^/.]+$/, "");
-  const reader = new FileReader();
+    let name = setNameInput.value.trim() || file.name.replace(/\.[^/.]+$/, "");
+    const reader = new FileReader();
 
-  reader.onload = async function(evt) {
-    const parsed = parseData(evt.target.result);
-    if (parsed.length === 0) {
-      alert("단어를 읽을 수 없습니다. CSV 형식을 확인해 주세요.");
-      return;
-    }
+    reader.onload = async function(evt) {
+      const parsed = parseData(evt.target.result);
+      if (parsed.length === 0) {
+        alert("단어를 읽을 수 없습니다. CSV 형식을 확인해 주세요.");
+        return;
+      }
 
-    const { error } = await supabaseClient
-      .from("voca_sets")
-      .upsert({ name: name, words: parsed }, { onConflict: "name" });
+      studySets[name] = parsed;
+      localStorage.setItem("my_voca_sets", JSON.stringify(studySets));
 
-    if (error) {
-      alert("클라우드 저장 실패: " + error.message);
-      return;
-    }
+      if (supabaseClient) {
+        try {
+          const { error } = await supabaseClient
+            .from("voca_sets")
+            .upsert({ name: name, words: parsed }, { onConflict: "name" });
 
-    setNameInput.value = "";
-    csvFileInput.value = "";
-    await loadSetsFromCloud();
-    selectSet(name);
-  };
-  reader.readAsText(file, "UTF-8");
-});
+          if (error) throw error;
+          await loadSetsFromCloud();
+        } catch (err) {
+          alert("클라우드 저장 실패: " + err.message);
+        }
+      }
+
+      setNameInput.value = "";
+      csvFileInput.value = "";
+      renderSetList();
+      renderMobileSelect();
+      selectSet(name);
+    };
+    reader.readAsText(file, "UTF-8");
+  });
+}
 
 function renderSetList() {
+  if (!setListElement) return;
   setListElement.innerHTML = "";
   Object.keys(studySets).forEach(name => {
     const li = document.createElement("li");
@@ -567,15 +626,20 @@ function renderSetList() {
     del.innerHTML = "&times;";
     del.onclick = async (e) => {
       e.stopPropagation();
-      if (!confirm(`'${name}' 세트를 클라우드에서 영구 삭제할까요?`)) return;
+      if (!confirm(`'${name}' 세트를 삭제할까요?`)) return;
 
-      const { error } = await supabaseClient.from("voca_sets").delete().eq("name", name);
-      if (error) {
-        alert("삭제 실패: " + error.message);
-        return;
+      delete studySets[name];
+      localStorage.setItem("my_voca_sets", JSON.stringify(studySets));
+
+      if (supabaseClient) {
+        try {
+          await supabaseClient.from("voca_sets").delete().eq("name", name);
+          await loadSetsFromCloud();
+        } catch (err) {
+          console.error("클라우드 삭제 실패:", err);
+        }
       }
 
-      await loadSetsFromCloud();
       const rem = Object.keys(studySets);
       if (rem.length > 0) selectSet(rem[0]);
       else {
